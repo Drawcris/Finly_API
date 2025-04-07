@@ -1,0 +1,17 @@
+from django.urls import path, include
+from rest_framework import routers
+from .serializers import TransactionSerializer, CategorySerializer, BudgetSerializer
+from .views import TransactionView, CategoryView, BudgetView, RegisterView, UserView
+
+router = routers.DefaultRouter()
+router.register(r'transactions',TransactionView, basename='transaction')
+router.register(r'categories', CategoryView, basename='category')
+router.register(r'budgets', BudgetView, basename='budget')
+router.register(r'register', RegisterView, basename='register')
+router.register(r'users', UserView)
+
+
+
+urlpatterns = [
+        path('', include(router.urls)),
+]
