@@ -3,7 +3,7 @@ from rest_framework import routers
 from .serializers import TransactionSerializer, CategorySerializer, BudgetSerializer
 from .views import (
         TransactionView, CategoryView, BudgetView, RegisterView,
-        UserView, StatisticsView, ExportCSVView, ExportPDFView)
+        UserView, StatisticsView, ExportCSVView, ExportPDFView, TransactionListView,CategoryListView)
 
 router = routers.DefaultRouter()
 router.register(r'transactions',TransactionView, basename='transaction')
@@ -17,5 +17,7 @@ urlpatterns = [
         path('statistics/', StatisticsView.as_view(), name='statistics'),
         path('export-csv/', ExportCSVView.as_view(), name='export-csv'),
         path('export-pdf/', ExportPDFView.as_view(), name='export-pdf'),
+        path('transaction-list/', TransactionListView.as_view(), name='transaction-list'),
+        path('category-list/', CategoryListView.as_view(), name='category-list'),
 
 ]

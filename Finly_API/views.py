@@ -143,6 +143,7 @@ class StatisticsView(APIView):
             "monthly": monthly_data
         })
 
+
 class ExportCSVView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -199,6 +200,90 @@ class ExportPDFView(APIView):
         return HttpResponse(buffer, content_type='application/pdf', headers={
             'Content-Disposition': f'attachment; filename="transactions_{now().date()}.pdf"'
         })
+
+
+class TransactionListView(APIView):
+    def get(self, request):
+        user = request.user
+        type_param = request.query_params.get('type')
+        category_param = request.query_params.get('category')
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        order_by = request.query_params.get('order_by')
+
+
+        transactions = Transaction.objects.filter(user=user).select_related('category')
+
+        if type_param in ['income', 'expense']:
+            transactions = transactions.filter(type=type_param)
+
+        if category_param:
+            transactions = transactions.filter(category__name=category_param)
+
+        if start_date_str:
+            transactions = transactions.filter(date__gte=start_date_str)
+        if end_date_str:
+            transactions = transactions.filter(date__lte=end_date_str)
+
+
+        if order_by == 'highest':
+            transactions = transactions.order_by('-amount')
+        elif order_by == 'lowest':
+            transactions = transactions.order_by('amount')
+        else:
+            transactions = transactions.order_by("-date")
+
+
+        serialized = TransactionSerializer(transactions, many=True)
+        return Response(serialized.data)
+
+
+class CategoryListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Pobranie parametrów zapytania do sortowania
+        order_by = request.query_params.get('order_by', 'total_expense')  # Domyślnie sortowanie po wydatkach
+        order_direction = request.query_params.get('direction', 'desc')  # Domyślna kolejność malejąca
+
+        # Grupowanie danych na podstawie kategorii z sumami przychodów i wydatków
+        category_stats = (
+            Transaction.objects.filter(user=user)
+            .values('category__name', 'category__icon')
+            .annotate(
+                total_expense=Sum('amount', filter=Q(type='expense')),  # Suma wydatków
+                total_income=Sum('amount', filter=Q(type='income')),  # Suma przychodów
+            )
+        )
+
+        # Ustawienie wartości domyślnej dla brakujących kategorii (np. null -> 0)
+        for stat in category_stats:
+            stat['total_expense'] = stat.get('total_expense', 0) or 0
+            stat['total_income'] = stat.get('total_income', 0) or 0
+
+        # Obsługa sortowania
+        if order_direction == 'desc':
+            order_by = f"-{order_by}"
+        try:
+            category_stats = sorted(category_stats, key=lambda x: x.get(order_by.lstrip('-'), 0),
+                                    reverse=order_by.startswith('-'))
+        except KeyError:
+            return Response({"error": f"Invalid sorting field: {order_by}"}, status=400)
+
+        # Serializacja danych w przyjaznym formacie
+        serialized_data = [
+            {
+                "category": stat['category__name'],
+                "icon": stat['category__icon'],
+                "total_expense": stat['total_expense'],
+                "total_income": stat['total_income']
+            }
+            for stat in category_stats
+        ]
+
+        return Response(serialized_data)
 
 
 
