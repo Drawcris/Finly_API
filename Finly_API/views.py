@@ -25,9 +25,6 @@ from reportlab.pdfbase import pdfmetrics
 
 
 # Create your views here.
-
-
-
 class TransactionView(viewsets.ModelViewSet):
     serializer_class = TransactionSerializer
     permission_classes = [IsAuthenticated]
@@ -282,7 +279,11 @@ class TransactionListView(APIView):
             transactions = transactions.filter(type=type_param)
 
         if category_param:
-            transactions = transactions.filter(category__name=category_param)
+            try:
+                category_id = int(category_param)
+                transactions = transactions.filter(category__id=category_id)
+            except ValueError:
+                transactions = transactions.filter(category__name=category_param)
 
         if start_date_str:
             transactions = transactions.filter(date__gte=start_date_str)
@@ -308,26 +309,22 @@ class CategoryListView(APIView):
     def get(self, request):
         user = request.user
 
-        # Pobranie parametrów zapytania do sortowania
-        order_by = request.query_params.get('order_by', 'total_expense')  # Domyślnie sortowanie po wydatkach
-        order_direction = request.query_params.get('direction', 'desc')  # Domyślna kolejność malejąca
+        order_by = request.query_params.get('order_by', 'total_expense')
+        order_direction = request.query_params.get('direction', 'desc')
 
-        # Grupowanie danych na podstawie kategorii z sumami przychodów i wydatków
         category_stats = (
             Transaction.objects.filter(user=user)
             .values('category__name', 'category__icon')
             .annotate(
-                total_expense=Sum('amount', filter=Q(type='expense')),  # Suma wydatków
-                total_income=Sum('amount', filter=Q(type='income')),  # Suma przychodów
+                total_expense=Sum('amount', filter=Q(type='expense')),
+                total_income=Sum('amount', filter=Q(type='income')),
             )
         )
 
-        # Ustawienie wartości domyślnej dla brakujących kategorii (np. null -> 0)
         for stat in category_stats:
             stat['total_expense'] = stat.get('total_expense', 0) or 0
             stat['total_income'] = stat.get('total_income', 0) or 0
 
-        # Obsługa sortowania
         if order_direction == 'desc':
             order_by = f"-{order_by}"
         try:
@@ -336,7 +333,6 @@ class CategoryListView(APIView):
         except KeyError:
             return Response({"error": f"Invalid sorting field: {order_by}"}, status=400)
 
-        # Serializacja danych w przyjaznym formacie
         serialized_data = [
             {
                 "category": stat['category__name'],
@@ -348,6 +344,42 @@ class CategoryListView(APIView):
         ]
 
         return Response(serialized_data)
+
+
+
+class BudgetSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        budgets = Budget.objects.filter(user=user)
+
+        summary = []
+        for budget in budgets:
+            start_date = budget.month
+            end_month = (start_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+            end_date = end_month - timedelta(days=1)
+
+            spent = Transaction.objects.filter(
+                user=user,
+                type='expense',
+                category=budget.category,
+                date__range=(start_date, end_date)
+            ).aggregate(total=Sum('amount'))['total'] or 0
+
+            summary.append({
+                "id": budget.id,
+                "category": budget.category.name if budget.category else "Brak kategorii",
+                "icon": budget.category.icon if budget.category else "",
+                "month": budget.month.strftime('%Y-%m'),
+                "budgeted": float(budget.amount),
+                "spent": float(spent),
+                "remaining": float(budget.amount - spent),
+                "over_budget": spent > budget.amount
+            })
+
+        return Response(summary)
+
 
 
 
