@@ -19,6 +19,10 @@ from unicodedata import category
 from .serializers import TransactionSerializer, CategorySerializer, BudgetSerializer, RegisterSerializer, UserSerializer
 from .models import Transaction, Budget, Category
 from django.contrib.auth.models import User
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase import pdfmetrics
+
+
 
 # Create your views here.
 
@@ -151,12 +155,34 @@ class ExportCSVView(APIView):
         user = request.user
         transactions = Transaction.objects.filter(user=user).select_related('category')
 
-        response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = f'attachment; filename="finly_transakcje_{now().date()}.csv"'
+        # Obliczanie podsumowania
+        total_income = transactions.filter(type='income').aggregate(total=Sum('amount'))['total'] or 0
+        total_expense = transactions.filter(type='expense').aggregate(total=Sum('amount'))['total'] or 0
+        balance = total_income - total_expense
+
+        # Obliczanie wydatków na kategorie
+        category_expenses = transactions.filter(type='expense').values('category__name').annotate(total=Sum('amount'))
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8-sig')
+        response['Content-Disposition'] = f'attachment; filename="finly_summary_{now().date()}.csv"'
 
         writer = csv.writer(response, delimiter=';')
-        writer.writerow(['Data', 'Typ', 'Kategoria', 'Kwota', 'Opis'])  # nagłówki PL
 
+        # Dodanie podsumowania
+        writer.writerow(['Podsumowanie'])
+        writer.writerow(['Przychody', f"{total_income:.2f}"])
+        writer.writerow(['Wydatki', f"{total_expense:.2f}"])
+        writer.writerow(['Bilans', f"{balance:.2f}"])
+        writer.writerow([])
+
+        # Dodanie wydatków na kategorie
+        writer.writerow(['Wydatki na kategorie'])
+        for category in category_expenses:
+            writer.writerow([category['category__name'], f"{category['total']:.2f}"])
+        writer.writerow([])
+
+        # Dodanie nagłówków i transakcji
+        writer.writerow(['Data', 'Typ', 'Kategoria', 'Kwota', 'Opis'])
         for t in transactions:
             writer.writerow([
                 t.date,
@@ -175,18 +201,57 @@ class ExportPDFView(APIView):
         user = request.user
         transactions = Transaction.objects.filter(user=user).select_related('category')
 
+        # Obliczanie podsumowania
+        total_income = transactions.filter(type='income').aggregate(total=Sum('amount'))['total'] or 0
+        total_expense = transactions.filter(type='expense').aggregate(total=Sum('amount'))['total'] or 0
+        balance = total_income - total_expense
+
+        # Obliczanie wydatków na kategorie
+        category_expenses = transactions.filter(type='expense').values('category__name').annotate(total=Sum('amount'))
+
+        # Rejestracja czcionek obsługujących polskie znaki
+        pdfmetrics.registerFont(TTFont('Arial', 'arial.ttf'))
+        pdfmetrics.registerFont(TTFont('Arial-Bold', 'arialbd.ttf'))  # Pogrubiona wersja
+
         buffer = BytesIO()
         p = canvas.Canvas(buffer, pagesize=A4)
         width, height = A4
         y = height - 50
 
-        p.setFont("Helvetica-Bold", 16)
-        p.drawString(50, y, f"Finly - Transaction Summary for {user.username}")
+        # Ustawienie czcionki
+        p.setFont("Arial-Bold", 16)
+        p.drawString(50, y, f"Finly - Podsumowanie dla {user.username}")
         y -= 40
 
-        p.setFont("Helvetica", 12)
+        p.setFont("Arial", 12)
+        p.drawString(50, y, f"Przychody: {total_income:.2f} zł")
+        y -= 20
+        p.drawString(50, y, f"Wydatki: {total_expense:.2f} zł")
+        y -= 20
+        p.drawString(50, y, f"Bilans: {balance:.2f} zł")
+        y -= 40
+
+        # Dodanie wydatków na kategorie
+        p.setFont("Arial-Bold", 14)
+        p.drawString(50, y, "Wydatki na kategorie:")
+        y -= 30
+
+        p.setFont("Arial", 12)
+        for category in category_expenses:
+            p.drawString(50, y, f"{category['category__name']}: {category['total']:.2f} zł")
+            y -= 20
+            if y < 50:
+                p.showPage()
+                y = height - 50
+
+        # Dodanie historii transakcji
+        p.setFont("Arial-Bold", 14)
+        p.drawString(50, y, "Historia transakcji:")
+        y -= 30
+
+        p.setFont("Arial", 12)
         for t in transactions:
-            line = f"{t.date} | {t.amount}zł | {t.type} | {t.category.name if t.category else ''} | {t.description}"
+            line = f"{t.date} | {t.amount} zł | {t.type} | {t.category.name if t.category else ''} | {t.description}"
             if y < 50:
                 p.showPage()
                 y = height - 50
@@ -198,9 +263,8 @@ class ExportPDFView(APIView):
 
         buffer.seek(0)
         return HttpResponse(buffer, content_type='application/pdf', headers={
-            'Content-Disposition': f'attachment; filename="transactions_{now().date()}.pdf"'
+            'Content-Disposition': f'attachment; filename="finly_summary_{now().date()}.pdf"'
         })
-
 
 class TransactionListView(APIView):
     def get(self, request):
