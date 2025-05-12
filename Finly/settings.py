@@ -104,7 +104,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'finly_db',
         'USER': 'postgres',
-        'PASSWORD': 'Hugolina1',
+        'PASSWORD': '***',
         'HOST': 'localhost',
         'PORT': '5432'
     }
